@@ -1,90 +1,53 @@
 const express = require("express");
 const path = require("path");
 const http = require("http");
-const socketIo = require("socket.io");
-const bcrypt = require("bcrypt");
-const bodyParser = require("body-parser");
-const User = require("./models/user");
-const connectDB = require("./db");
+const { Server } = require("socket.io");
 
-// Initialize app and DB connection
 const app = express();
-connectDB();
-
-// Middleware
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, "public")));
-
-// Create HTTP server and socket.io instance
 const server = http.createServer(app);
-const io = socketIo(server);
-
-// Routes for user approval (Admin action)
-app.post("/approve", async (req, res) => {
-    const { username } = req.body;
-
-    try {
-        const user = await User.findOne({ username });
-        if (!user) return res.status(404).send("User not found.");
-
-        user.approved = true;
-        await user.save();
-        res.send("User approved successfully.");
-    } catch (err) {
-        res.status(500).send("An error occurred.");
-    }
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"],
+    },
 });
 
-// Socket.io events
+const users = {};
+
+app.use(express.static(path.join(__dirname, "public")));
+
 io.on("connection", (socket) => {
     console.log("A user connected");
 
-    // Registration
-    socket.on("register", async ({ username, password }, callback) => {
-        try {
-            const existingUser = await User.findOne({ username });
-            if (existingUser) return callback({ success: false, message: "Username already exists." });
-
-            const hashedPassword = await bcrypt.hash(password, 10);
-            const newUser = new User({ username, password: hashedPassword });
-            await newUser.save();
-
-            callback({ success: true, message: "Registration successful. Awaiting approval." });
-        } catch (err) {
-            callback({ success: false, message: "Registration failed. Try again later." });
-        }
-    });
-
-    // Login
-    socket.on("login", async ({ username, password }, callback) => {
-        try {
-            const user = await User.findOne({ username });
-            if (!user) return callback({ success: false, message: "Invalid username or password." });
-            if (!user.approved) return callback({ success: false, message: "Account not approved yet." });
-
-            const isMatch = await bcrypt.compare(password, user.password);
-            if (!isMatch) return callback({ success: false, message: "Invalid username or password." });
-
+    socket.on("register", ({ username, password }, callback) => {
+        if (users[username]) {
+            callback({ success: false, message: "Username already exists." });
+        } else {
+            users[username] = password;
             callback({ success: true });
-        } catch (err) {
-            callback({ success: false, message: "An error occurred." });
         }
     });
 
-    // Send Message
+    socket.on("login", ({ username, password }, callback) => {
+        if (users[username] && users[username] === password) {
+            callback({ success: true });
+        } else {
+            callback({ success: false, message: "Invalid username or password." });
+        }
+    });
+
     socket.on("send_message", (data) => {
-        io.emit("receive_message", {
-            username: data.username,
-            message: data.message,
-        });
+        socket.broadcast.emit("receive_message", data);
+    });
+
+    socket.on("exit_user", (username) => {
+        console.log(`${username} left the chat`);
     });
 
     socket.on("disconnect", () => {
         console.log("A user disconnected");
     });
 });
-
-// Start the server
 server.listen(5000, () => {
-    console.log("Server running on http://localhost:5000");
+  console.log(`Server is running on http://localhost:5000`);
 });
