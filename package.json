@@ -22,4 +22,7 @@
   ],
   "author": "Your Name",
   "license": "MIT"
+  ,
+  "clean-cache": "npm cache clean --force"
+
 }
